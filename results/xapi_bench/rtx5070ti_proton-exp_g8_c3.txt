@@ -1,0 +1,19 @@
+adapter 0: NVIDIA GeForce RTX 5070 Ti
+2560x1440, latency 2, 600 frames per run
+calibrating (GPU-bound, each side alone):
+  game       1563 iterations ->   8.20 ms
+  consumer    584 iterations ->   2.98 ms
+measuring each side alone...
+running Serial...
+running Pipelined...
+
+                                   ms/frame      fps
+game pass alone (D3D11)                8.10    123.4
+consumer pass alone (D3D12)            2.99    334.2
+sum of both (no overlap, no stall)    11.10     90.1
+Serial    (result n home in n)        18.59     53.8   CPU 0.01 ms/frame
+Pipelined (result n-1 home in n)      11.39     87.8   CPU 0.01 ms/frame
+
+handoff overhead, Serial:    +7.49 ms/frame over the sum
+handoff overhead, Pipelined: +0.29 ms/frame over the sum
+Pipelined speed-up: 1.63x
