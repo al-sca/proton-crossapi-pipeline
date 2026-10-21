@@ -9,6 +9,7 @@
 set -euo pipefail
 REPO="${1:?path to DLSS5-Feeder}"
 WINSDK="${2:?path to xwin splat output}"
+PIPE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
 for f in external/ngx/nvsdk_ngx.h external/ngx/libs/nvsdk_ngx_d.lib external/vulkan/vulkan/vulkan_core.h; do
@@ -38,3 +39,6 @@ clang-cl --target=x86_64-pc-windows-msvc -fuse-ld=lld-link "${SYS[@]}" \
   external/ngx/libs/nvsdk_ngx_d.lib version.lib kernel32.lib user32.lib advapi32.lib ole32.lib
 
 echo "built build/dlss5-feed.addon64 ($BUILD_ID)"
+
+# tools/game/*.sh install from this repo's build/ (or $XAPI_ADDON)
+mkdir -p "$PIPE/build" && cp build/dlss5-feed.addon64 "$PIPE/build/" && echo "copied to $PIPE/build/dlss5-feed.addon64"

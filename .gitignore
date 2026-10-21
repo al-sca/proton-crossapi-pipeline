@@ -3,3 +3,4 @@ build/
 *.exe
 *.pdb
 xapi_bench_results.txt
+results/games/*/raw/

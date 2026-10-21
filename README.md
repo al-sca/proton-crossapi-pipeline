@@ -70,9 +70,10 @@ the waiting between them.
 | `include/crossapi_pipeline.h` | Header-only `xapi::D3D11ToD3D12Pipeline`: shared-fence setup, `BeginFrame` / `HandOff` / `EndFrame`, `Serial` and `Pipelined` modes, CPU fallback when a D3D11 cross-API wait is refused |
 | `bench/xapi_bench.cpp` | Headless benchmark: a D3D11 "game" pass and a D3D12 "consumer" pass, each calibrated to a target GPU time, joined like a real add-on (shared textures, shared fence), measured Serial vs Pipelined |
 | `patches/dlss5-feeder/` | The fix applied to DLSS5-Feeder 1.19.0's D3D11 transport, enabled with `async_home=1` |
+| `tools/game/` | Per-game scripts: `setup.sh`, `enable.sh`, `disable.sh`, `status.sh`, `bench.sh` (before/after benchmark), `report.sh` (results table below) |
 | `tools/record-game.sh` | Per-thread CPU and GPU recorder for a running Proton game: is it CPU-bound or waiting? |
 | `tools/build-bench.sh`, `tools/build-dlss5-feeder.sh` | Cross-compile both on Linux (clang-cl + lld-link + xwin) |
-| `results/` | Raw benchmark output and the Watch Dogs measurements |
+| `results/` | Benchmark output: `xapi_bench/`, `games/<game>/` from `bench.sh`, the Watch Dogs write-up |
 
 ### Using the library
 
@@ -125,6 +126,59 @@ git am /path/to/proton-crossapi-pipeline/patches/dlss5-feeder/*.patch
 Then replace the game's `dlss5-feed.addon64` with `build/dlss5-feed.addon64` (keep a backup)
 and set `async_home=1` in `dlss5-feed.cfg`. The first line of `dlss5-feed.log` shows the build
 id, and the log says `async_home (D3D11): the blit carries frame n-1 ...` once it is active.
+
+## Testing a game
+
+The scripts in `tools/game/` take the game's **Steam app id** (the number in its store URL, or
+`protontricks -l`). They find the install, the Proton prefix and the DLSS 5 files on their own.
+
+```sh
+tools/game/setup.sh 307690                 # once: d3dcompiler_47, patched Feeder, async_home=1, checks
+tools/game/bench.sh 307690                 # before/after benchmark, updates the table below
+tools/game/status.sh 307690                # what is installed and set
+tools/game/disable.sh 307690 [--official]  # async_home=0 (--official: also put the official add-on back)
+tools/game/enable.sh 307690                # patched add-on + async_home=1
+```
+
+- **`setup.sh`** installs `d3dcompiler_47` with protontricks (skipped if it is already there),
+  installs the patched add-on with `async_home=1`, and shows what is still missing, such as a
+  launch-option DLL override. If the game has no DLSS 5 yet, `--exe <game.exe>` runs
+  `uvx dlss5-enabler@latest install` for it first. Without `--exe` it lists exe candidates.
+- **`enable.sh`** keeps the official add-on as `dlss5-feed.addon64.official.bak` and refuses to
+  install the patched build on top of a different Feeder version (`--force` overrides). The
+  patched build comes from `build/dlss5-feed.addon64`, which `tools/build-dlss5-feeder.sh`
+  writes, or from `$XAPI_ADDON`.
+- **`bench.sh`** runs "before" (`async_home=0`) and "after" (`async_home=1`) **in one game
+  session**. The Feeder re-reads `dlss5-feed.cfg` every 60 frames and rebuilds when
+  `async_home` changes, so the script flips it while you stand at the test spot: no restart,
+  same scene for both runs. With `async_home=0` the patched add-on runs exactly the official
+  code path. It starts the game through Steam if needed and waits for you to press Enter;
+  switch back to the game within 10 s and stand still (no pause, no menu). Per run it waits
+  until the Feeder has applied the switch, lets it settle, starts at a fresh telemetry window,
+  and records 45 s; a sound marks each start and end. Frame rate and frame times come from the
+  RenoDX DLSS 5 add-on's 30 s telemetry in `ReShade.log` and the Feeder's own stats, GPU from
+  `nvidia-smi`, CPU threads from `top`, so no launch options or overlays are needed. Options:
+  `before|after` for a single run, `--tag dlss-off` (DLSS 5 toggled off in game, F6) or
+  `--tag city` for more pairs, `--seconds`, `--delay`, `--no-launch`, `--no-prompt`.
+- **`report.sh`** prints the comparison for a game and rewrites the table below from every
+  `results/games/*/before*.txt` + `after*.txt` pair. Summaries are committed, the raw recordings
+  (`results/games/*/raw/`) are git-ignored.
+
+## Game results
+
+All on the machine in [Limits](#limits-and-open-questions) unless the game's folder says
+otherwise. Change = after fps / before fps.
+
+<!-- games:begin -->
+| Game | Resolution | DLSS 5 | Before (`async_home=0`) | After (`async_home=1`) | Change | Date |
+|---|---|---|---|---|---|---|
+| [DARK SOULS™ II: Scholar of the First Sin](results/games/dark_souls_ii_scholar_of_the_first_sin/) | 2560x1440 | on | 54.5 fps, p50 20.00 ms, GPU 53 % | 60.0 fps, p50 16.75 ms, GPU 60 % | **1.10x** ⚠ after run sits at the game's 60 fps cap (GPU 60 %) | 2026-10-21 |
+| [DARK SOULS™ III](results/games/dark_souls_iii/) | 2560x1440 | on | 49.1 fps, p50 22.25 ms, GPU 58 % | 77.5 fps, p50 13.00 ms, GPU 98 % | **1.58x** | 2026-10-21 |
+| [DARK SOULS™: REMASTERED](results/games/dark_souls_remastered/) | 2560x1440 | on | 55.0 fps, p50 20.00 ms, GPU 52 % | 97.6 fps, p50 10.25 ms, GPU 98 % | **1.77x** | 2026-10-21 |
+| [STAR WARS Jedi: Fallen Order™](results/games/jedi_fallen_order/) | 2560x1440 | on | 46.0 fps, p50 23.25 ms, GPU 59 % | 71.9 fps, p50 14.00 ms, GPU 98 % | **1.56x** | 2026-10-21 |
+| [Sleeping Dogs: Definitive Edition](results/games/sleepingdogsdefinitiveedition/) | 2560x1440 | on | 53.5 fps, p50 21.25 ms, GPU 59 % | 86.6 fps, p50 11.75 ms, GPU 98 % | **1.62x** | 2026-10-21 |
+| [Watch_Dogs](results/games/watch_dogs/) | 2560x1440 | on | 49.0 fps, p50 22.50 ms, GPU 61 % | 71.5 fps, p50 14.00 ms, GPU 98 % | **1.46x** | 2026-10-16 |
+<!-- games:end -->
 
 ## Building on Linux
 
