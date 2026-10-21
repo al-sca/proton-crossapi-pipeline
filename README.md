@@ -13,6 +13,163 @@ benchmark that reproduces the problem without any game, and a ready patch for
 | `xapi_bench`, 5 ms game + 7 ms consumer pass | 53.8–56.2 fps | **79.8–80.4 fps** |
 | `xapi_bench`, 8 ms game + 3 ms consumer pass | 53.8 fps | **87.8 fps** |
 
+More games are in [Game results](#game-results).
+
+## Quick start: use it for your game
+
+From a fresh clone to a before/after benchmark of one Steam game. Everything below goes into one
+folder, `~/src` here. Nothing is installed system-wide apart from the packages in step 0 and
+`xwin` in `~/.cargo/bin`.
+
+```
+~/src/
+├── proton-crossapi-pipeline/   this repo: the scripts, and build/dlss5-feed.addon64 at the end
+├── DLSS5-Feeder/               the add-on's source, with the patch applied
+├── NVIDIA-DLSS/                NVIDIA's DLSS SDK: the NGX headers and import library
+├── Vulkan-Headers/             Khronos Vulkan headers
+└── xwin-splat/                 Microsoft's C runtime and Windows SDK, for cross-compiling
+```
+
+**You need:** Linux, Steam with Proton, an NVIDIA RTX GPU that runs DLSS 5, and a **D3D11** game.
+After step 4, `tools/game/status.sh` tells you whether the patch applies to your game.
+
+### 0. Packages
+
+| Tool | Arch / CachyOS | Debian / Ubuntu | Fedora |
+|---|---|---|---|
+| `git`, `python3`, `cargo` | `git python rust` | `git python3 cargo` | `git python3 cargo` |
+| `clang-cl`, `lld-link`, `llvm-rc` | `clang lld llvm` | `clang lld llvm` | `clang lld llvm` |
+| `protontricks` (or its Flatpak) | `protontricks` (AUR) | `protontricks` | `protontricks` |
+| `uv` (runs dlss5-enabler) | `uv` | [installer](https://docs.astral.sh/uv/getting-started/installation/) | `uv` |
+
+On Debian/Ubuntu the LLVM tools may carry a version suffix (`clang-cl-19`). If so, link them
+under the plain names, e.g. `sudo ln -s /usr/bin/clang-cl-19 /usr/local/bin/clang-cl`, and do
+the same for `lld-link` and `llvm-rc`. `nvidia-smi` comes with the NVIDIA driver.
+
+### 1. Get the sources
+
+```sh
+mkdir -p ~/src && cd ~/src
+git clone https://github.com/al-sca/proton-crossapi-pipeline
+
+# DLSS5-Feeder at the commit the patch was made for (1.19.0), then the patch on top
+git clone https://github.com/jlrouzies-fr/DLSS5-Feeder
+cd DLSS5-Feeder
+git checkout 34edfe16626d52a8f66c5996c58d5b7c982d3023
+git am ../proton-crossapi-pipeline/patches/dlss5-feeder/*.patch
+cd ..
+```
+
+`git am` makes a commit, so git needs a name and an email. If it complains, run
+`git config --global user.name "..."` and `git config --global user.email "..."` once, then
+`git am --abort`, then repeat the `git am` line.
+
+### 2. Put the NVIDIA and Vulkan headers into DLSS5-Feeder
+
+DLSS5-Feeder doesn't ship these two dependencies. Its build expects them in `external/ngx/`
+and `external/vulkan/`. Download them (about 45 MB each; the sparse clone fetches only the two
+folders needed from NVIDIA's 1.4 GB repository):
+
+```sh
+cd ~/src
+git clone --depth 1 --filter=blob:none --sparse https://github.com/NVIDIA/DLSS NVIDIA-DLSS
+git -C NVIDIA-DLSS sparse-checkout set include lib/Windows_x86_64/x64
+git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers
+```
+
+Copy exactly these files. `mkdir -p` creates the folders that don't exist yet:
+
+```sh
+cd ~/src/DLSS5-Feeder
+mkdir -p external/ngx/libs external/vulkan/vulkan external/vulkan/vk_video
+
+# NVIDIA: all NGX headers, and the release import library (x64, /MD; not the _dbg or _s ones)
+cp ../NVIDIA-DLSS/include/*.h                            external/ngx/
+cp ../NVIDIA-DLSS/lib/Windows_x86_64/x64/nvsdk_ngx_d.lib external/ngx/libs/
+
+# Khronos: the Vulkan headers and their video sub-headers
+cp ../Vulkan-Headers/include/vulkan/*.h   external/vulkan/vulkan/
+cp ../Vulkan-Headers/include/vk_video/*.h external/vulkan/vk_video/
+```
+
+To check, list these three files. All must exist; if one is missing, the build stops and names it:
+
+```sh
+ls external/ngx/nvsdk_ngx.h external/ngx/libs/nvsdk_ngx_d.lib external/vulkan/vulkan/vulkan_core.h
+```
+
+NVIDIA's SDK is under NVIDIA's license and the Vulkan headers under Apache-2.0. Don't commit
+them to this repo or to DLSS5-Feeder; they stay in your local copy.
+
+### 3. Build the patched add-on
+
+The add-on is a Windows DLL. `xwin` downloads Microsoft's C runtime and Windows SDK so that
+clang can build it on Linux. The `--accept-license` flag accepts Microsoft's license. The
+download takes about 1.1 GB in `~/src/.xwin-cache`, which you can delete afterwards; the
+result in `~/src/xwin-splat` is about 630 MB.
+
+```sh
+cd ~/src
+cargo install xwin --locked
+~/.cargo/bin/xwin --accept-license --arch x86_64 splat --output ~/src/xwin-splat
+
+~/src/proton-crossapi-pipeline/tools/build-dlss5-feeder.sh ~/src/DLSS5-Feeder ~/src/xwin-splat
+```
+
+It ends with `built build/dlss5-feed.addon64 (<commit>)` and
+`copied to ~/src/proton-crossapi-pipeline/build/dlss5-feed.addon64`. Compiler warnings along
+the way are normal. The scripts below take the add-on from that `build/` folder.
+
+### 4. Set up the game
+
+Find the game's **Steam app id**: it's the number in its store URL, or run `protontricks -l`.
+Start the game once through Steam so its Proton prefix exists, then quit it. Then run:
+
+```sh
+cd ~/src/proton-crossapi-pipeline
+tools/game/setup.sh <appid>
+```
+
+- If the game has no DLSS 5 yet, `setup.sh` lists the game's `.exe` candidates. Run it again
+  with `--exe "/path/to/Game.exe"` and it installs DLSS 5 with `uvx dlss5-enabler@latest install`.
+- It installs `d3dcompiler_47` into the prefix with protontricks, keeps the official add-on as
+  `dlss5-feed.addon64.official.bak`, installs the patched one, and sets `async_home=1`.
+- It ends with the game's status. If it reports **no native override**, copy the
+  `WINEDLLOVERRIDES="..." %command%` line it prints into Steam > the game > Properties >
+  Launch Options.
+- Start the game once with DLSS 5, then quit. `tools/game/status.sh <appid>` should now say
+  **`D3D11 cross-API -- the patch applies`**. With any other transport, the patch changes nothing.
+
+### 5. Benchmark
+
+```sh
+tools/game/bench.sh <appid>
+```
+
+1. The script starts the game through Steam, with the patched add-on already in place.
+2. Load a save and go to a spot where you can stand still. Wait until shader compilation and
+   streaming have settled, then press **Enter** in the terminal.
+3. Switch back to the game within 10 s and **stand still**. No pause menu, no alt-tab.
+4. It records 45 s with `async_home=0` (the official code path), then 45 s with
+   `async_home=1`, in the same session and scene. A sound marks each start and end; a bell
+   means it's done.
+
+The summaries land in `results/games/<game>/before.txt` and `after.txt`, and the table under
+[Game results](#game-results) is rebuilt. `--tag <name>` stores another scene as a separate pair.
+
+The fix stays on afterwards. `tools/game/disable.sh <appid> --official` puts the official
+add-on back. To share a result, commit `results/games/<game>/*.txt` and `README.md`, then open
+a pull request. The raw recordings in `results/games/*/raw/` stay local.
+
+**If bench.sh stops with an error**
+
+| Message | Meaning, and what to do |
+|---|---|
+| the running game loaded Feeder ..., not the patched build | The game was already running when the add-on was replaced. Quit it and run `bench.sh` again. |
+| the game has DLSS5-Feeder X, the patched build is Y | dlss5-enabler installed a newer Feeder. The patch must be rebased onto that version and rebuilt. |
+| the Feeder did not pick up async_home=... within 30 s | The game was paused, minimised or in a menu. Stay in the game while it records. |
+| ⚠ after run sits at the game's 60 fps cap (in the results table) | The game's own frame cap limits the result, not the GPU. The gain shown is the most the cap allows. |
+
 ## The problem
 
 ```
@@ -115,6 +272,8 @@ comparison. Please contribute results from other GPUs, drivers and Proton versio
 `results/`.
 
 ### Applying the DLSS5-Feeder patch
+
+Step by step, with every download and copy: [Quick start](#quick-start-use-it-for-your-game).
 
 ```sh
 git clone https://github.com/jlrouzies-fr/DLSS5-Feeder && cd DLSS5-Feeder
